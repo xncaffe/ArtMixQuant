@@ -8,7 +8,8 @@ import copy
 import numpy as np
 from mixQuantEngine.artRuntime import *
 
-INPUT_OUTPUT_PRECISION_SAME_NODES=["POOL","ELTWISE_MUL","SOFTMAX","SIGMOID","MISH","TANH"]
+#INPUT_OUTPUT_PRECISION_SAME_NODES=["POOL","ELTWISE_MUL","SOFTMAX","SIGMOID","MISH","TANH"]
+INPUT_OUTPUT_PRECISION_SAME_NODES=["POOL", "SOFTMAX_EXP", "CALLBACK"]
 FORCE_16BIT_NODES=["ELTWISE_MUL","SOFTMAX","SOFTMAX_EXP","SOFTMAX_DIV","SIGMOID","MISH","TANH"]
 
 def updatePrecisionByOutput(netJson,tensor_name,bw):
@@ -146,14 +147,17 @@ def updateTensorPrecision(netJson):
         if node["operator_type"]=="SLICE":
             print("ERROR! not support slice!")
             assert(0)
-        if(node["operator_type"] in FORCE_16BIT_NODES):
-            # modify previous input operator tensors
-            for input_tensor in node["input_tensor_names"]:
-                updatePrecisionByOutput(netJson,input_tensor,16)
-            # force 16 bit output tensor
-            node["output_tensor_bw"]=16
+        # if(node["operator_type"] in FORCE_16BIT_NODES):
+        #     # modify previous input operator tensors
+        #     for input_tensor in node["input_tensor_names"]:
+        #         updatePrecisionByOutput(netJson,input_tensor,16)
+        #     # force 16 bit output tensor
+        #     node["output_tensor_bw"]=16
         # SCALE has two inputs, the second must be 16 bw
-        elif node["operator_type"]=="SCALE":
+        if node["operator_type"]=="SCALE":
+            ##### Add by NanXu in 2022-09-01 #####
+            netJson[name]["internal_bw(read_only)"]=getPrecisionByOutput(netJson,node["input_tensor_names"][0])
+            ######################################
             if len(node["input_tensor_names"])==2:
                 weight_position_tensor=node["input_tensor_names"][1]
                 updatePrecisionByOutput(netJson,weight_position_tensor,16)
@@ -162,7 +166,7 @@ def updateTensorPrecision(netJson):
             for input_tensor in node["input_tensor_names"]:
                 updatePrecisionByOutput(netJson,input_tensor,node["output_tensor_bw"])
         # ELTWISE_ADD has same precision input by volting with output
-        elif node["operator_type"]=="ELTWISE_ADD":
+        elif node["operator_type"]=="ELTWISE_ADD" or node["operator_type"]=="ELTWISE_MUL":
             left_bw=getPrecisionByOutput(netJson,node["input_tensor_names"][0])
             right_bw=getPrecisionByOutput(netJson,node["input_tensor_names"][1])
             if left_bw!=right_bw:
@@ -212,10 +216,15 @@ def updateOperatorPrecision(netJson):
             node["internal_bw(read_only)"]=getPrecisionByOutput(netJson,node["input_tensor_names"][0])
         elif node["operator_type"]=="INPUT":
             node["internal_bw(read_only)"]=node["output_tensor_bw"]
+        ##### Add by NanXu in 2022-09-01 #####
+        elif node["operator_type"]=="SCALE":
+            netJson[name]["internal_bw(read_only)"]=getPrecisionByOutput(netJson,node["input_tensor_names"][0])
+        ######################################
         else:
             first_input_bw=getPrecisionByOutput(netJson,node["input_tensor_names"][0])
             for input_tensor in node["input_tensor_names"][1:]:
                 if first_input_bw!=getPrecisionByOutput(netJson,input_tensor):
+                    save_json(netJson, "error.json")
                     print("ERROR! INPUT TENSORS ARE NOT SAME! NODE:",node)
                     assert(0)
             node["internal_bw(read_only)"]=getPrecisionByOutput(netJson,node["input_tensor_names"][0])

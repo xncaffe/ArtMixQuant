@@ -11,7 +11,7 @@ def remove_dir(dir):
         dirlists=os.listdir(dir)
         if not dirlists:
             if os.path.exists(dir):
-                os.rmdir(dir)
+                os.removedirs(dir)
         else:
             for file in dirlists:
                 remove_dir(os.path.join(dir, file))
@@ -138,6 +138,7 @@ def setOptModelOfOnnx(iniPath, outBaseDir):
         file.close()
         print("ERROR: Failed to select opt-model. If your network is caffe, please check and turn off the 'UseOpt' option. If not, please check the path.")
         assert(0)
+
 
 def set_ini_bw_json(input_ini,out_ini,json_path):
     file = open(input_ini,'r',encoding='utf-8')
