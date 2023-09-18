@@ -1,5 +1,17 @@
 
 import numpy as np
+import copy
+from mixQuantEngine.fastMixCalculate import *
+
+def del_invalid_param(setJson):
+    outSetJson=copy.deepcopy(setJson)
+    for _idx, setOpName in enumerate(outSetJson.keys()):
+        cpOutSetJsonOp = copy.deepcopy(outSetJson[setOpName])
+        for ix, paramName in enumerate(cpOutSetJsonOp.keys()):
+            if paramName == "bit_width":
+                continue
+            del outSetJson[setOpName][paramName]
+    return outSetJson
 
 def mixQuantJson2Array(netJson):
     precision_array=[]
@@ -8,23 +20,45 @@ def mixQuantJson2Array(netJson):
         precision_array.append(node["output_tensor_bw"])
     return precision_array
 
-def mixQuantJson2SearchArray(netJson):
+def mixQuantJson2SearchArray(BlkNetJson):
     precision_array=[]
-    for node_index,name in enumerate(netJson.keys()):
-        node=netJson[name]
+    for _index, blkname in enumerate(BlkNetJson.keys()):
+        blkInfos=BlkNetJson[blkname]
         _param=[0,0]
-        if(node["output_tensor_bw"]==8):
-            _param[0]=1
+        extFlag=False
+        for nodeName in blkInfos.keys():
+            node = blkInfos[nodeName]
+            if(node["output_tensor_bw"]==8):
+                extFlag=True
+                break 
+        if extFlag:
+            _param[0] = 1
         else:
-            _param[1]=1
+            _param[1] = 1               
         precision_array.append(_param)
     return precision_array
 
-def Array2mixQuantJson(netJson,precision_array):
-    for node_index,name in enumerate(netJson.keys()):
-        node=netJson[name]
-        node["output_tensor_bw"]=precision_array[node_index]
-    return netJson
+def Array2mixQuantJson(setJson, BlkInfos, precision_array, onnx_model, initialLists):
+    outSetJson=del_invalid_param(setJson)
+    setOpNameLists = []
+    for _id, blkName in enumerate(BlkInfos.keys()):
+        setBw = precision_array[_id]
+        BlkNodes=BlkInfos[blkName]
+        for _index, op_name in enumerate(BlkNodes.keys()):
+            Node = BlkNodes[op_name]
+            insertOpName = op_name + '_{}'.format(Node["operator_type"])
+            if insertOpName in outSetJson.keys():
+                if insertOpName not in setOpNameLists:
+                    outSetJson[insertOpName]["bit_width"]=setBw
+                    setOpNameLists.append(insertOpName)
+            output_tensor_names = Node["output_tensor_names"]
+            for output_tensor_name in output_tensor_names:
+                setInitialLists = find_initializer_from_node(output_tensor_name, onnx_model, initialLists)
+                for setInitialName in setInitialLists:
+                    if setInitialName not in setOpNameLists:
+                        outSetJson[setInitialName]["bit_width"]=setBw                      
+                        setOpNameLists.append(setInitialName)
+    return outSetJson
 
 def mixQuantJson2Matrix(netJson):
     net_graph_code=[]

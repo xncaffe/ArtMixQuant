@@ -3,17 +3,10 @@ import numpy as np
 import os
 import json
 import copy
-
 #INPUT_OUTPUT_PRECISION_SAME_NODES=["POOL","ELTWISE_MUL","SOFTMAX","SIGMOID","MISH","TANH","SOFTMAX_EXP","SOFTMAX_DIV", "CALLBACK"]
 #INPUT_OUTPUT_PRECISION_SAME_NODES=["POOL","SOFTMAX","SOFTMAX_EXP","SOFTMAX_DIV", "CALLBACK"]
-INPUT_OUTPUT_PRECISION_SAME_NODES=["POOL", "SOFTMAX_EXP", "CALLBACK"]
+INPUT_OUTPUT_PRECISION_SAME_NODES=["ArtMaxPool", "ArtAveragePool", "ArtGlobalMaxPool", "ArtGlobalAveragePool", "ArtSoftmaxExp", "CallBack"]
 #FORCE_16BIT_NODES=["ELTWISE_MUL","SOFTMAX","SOFTMAX_EXP","SOFTMAX_DIV","SIGMOID","MISH","TANH"]
-
-def parse_json(jsonFile):
-    fp = open(jsonFile,"r", encoding='utf-8')
-    js_infos = json.load(fp)
-    fp.close()
-    return js_infos
 
 def get_net_output_nodes(NetJson):
     NetOutputNodes={}
@@ -72,6 +65,8 @@ def get_precision_sameofinout(NetJson):
     id=0
     for node_index,op_name in enumerate(NetJson.keys()):
         operator=NetJson[op_name]["operator_type"]
+        if "Art" not in operator:
+            operator = "CallBack"
         if operator in INPUT_OUTPUT_PRECISION_SAME_NODES:
             FocusNodes={}
             FocusNodes[op_name]=NetJson[op_name]
@@ -124,7 +119,7 @@ def integrate_block(NetJson,NetOutputNodes):
             OutNode=OutputNodes[OutName]
             InputOfOutputNames=OutNode["input_tensor_names"]
             InputOfOutputOperator=OutNode["operator_type"]
-            if InputOfOutputOperator!="CONCAT":
+            if InputOfOutputOperator!="ArtConcat":
                 for InOfOutName in InputOfOutputNames:
                     opname=find_opname_from_outnames(NetJson, InOfOutName)
                     InOfOutNode=NetJson[opname]
@@ -156,7 +151,7 @@ def integrate_block(NetJson,NetOutputNodes):
         BlkNodeInfos=loop_inter_dupgroup(BlkNodeInfos)
         if len(NetJsonCp)<1:
             break
-        BlkNodeInfos=loop_inter_dupgroup(BlkNodeInfos)
+        #BlkNodeInfos=loop_inter_dupgroup(BlkNodeInfos)
     return BlkNodeInfos
 
 def inter_norspec_blk(NorBlkInfos, SpecBlkInfos):
@@ -177,7 +172,7 @@ def inter_norspec_blk(NorBlkInfos, SpecBlkInfos):
         BlkNodeInfos["blk_%d" % Id]=OutInitInfos[blk_name]
     return BlkNodeInfos
 
-def delete_specnodes(NetJson, BlkNodeInfos):
+def delete_specnodes(NetJson, BlkNodeInfos, NetOutputNodes):
     BlkNodeInfosFn={}
     id=0
     for Index, BlkName in enumerate(BlkNodeInfos.keys()):
@@ -185,6 +180,9 @@ def delete_specnodes(NetJson, BlkNodeInfos):
         DelFlag=False
         for i,name in enumerate(BlkNodes.keys()):
             Node=BlkNodes[name]
+            if name in NetOutputNodes:
+                DelFlag = True
+                break
             #operator=Node["operator_type"]
             #input_tensor_names = Node["input_tensor_names"]
             output_tensor_names = Node["output_tensor_names"]
@@ -193,7 +191,7 @@ def delete_specnodes(NetJson, BlkNodeInfos):
                 delopnames = find_opname_from_inputnames(NetJson, output_tensor_name)
                 for delopname in delopnames:
                     delNode = NetJson[delopname]
-                    if (delNode["operator_type"] == "SCALE") and (len(delNode["input_tensor_names"]) >= 2):
+                    if (delNode["operator_type"] == "ArtScale") and (len(delNode["input_tensor_names"]) >= 2):
                         DelFlag = True
                         break
                 if DelFlag:
@@ -211,5 +209,5 @@ def get_block_node_infos(NetJson):
     NorBlkNodeInfos=integrate_block(NetJson, NetOutputNodes)
     SpecBlkNodeInfos=get_precision_sameofinout(NetJson)
     BlkNodeInfos=inter_norspec_blk(NorBlkNodeInfos, SpecBlkNodeInfos)
-    BlkNodeInfosFn=delete_specnodes(NetJson, BlkNodeInfos)
+    BlkNodeInfosFn=delete_specnodes(NetJson, BlkNodeInfos, NetOutputNodes)
     return BlkNodeInfosFn
