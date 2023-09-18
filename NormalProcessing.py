@@ -1,8 +1,8 @@
-from cv2 import split
 import numpy as np
 import os
 import csv
 import copy
+import onnx
 import matplotlib.pyplot as plt
 # import multiprocessing 
 from threading import Thread
@@ -10,6 +10,9 @@ from mixQuantEngine.mixQuantCorrecter import *
 from mixQuantEngine.artRuntime import *
 from mixQuantEngine.netEncoderDecoder import *
 from mixQuantModel.DDEController import *
+from mixQuantEngine.v2netEncoder import *
+from mixQuantEngine.fastEncoderDecoder import *
+
 BENCH_INIT=1
 
 def get_linear_score(val,min_val,max_val):
@@ -48,10 +51,16 @@ def studio_processing_worker(param):
     output_base_dir=param["output_base_dir"]
     test_id=param["test_id"]
     current_param=param["current_param"]
-    run_artstudio(artstudio_excutor_path,ini_test_path,output_base_dir)
+    UseSrc=param["UseSrc"]
+    #maskDump=param["maskDump"]
+    netOutTensors=param["netOutTensors"]
+    #run_artstudio(artstudio_excutor_path,ini_test_path,output_base_dir)
+    #run_artstudio(artstudio_excutor_path,ini_test_path,output_base_dir, UseSrc, maskDump)
+    run_artstudio(artstudio_excutor_path,ini_test_path,output_base_dir, UseSrc) 
     output_test_dir=os.path.join(output_base_dir,get_ini_name(ini_test_path))
-    total_cycle_test,sum_rmse_test=get_total_cycle_mse(output_test_dir)
-    return_val={"test_id":test_id,"total_cycle_test":total_cycle_test,"sum_rmse_test":sum_rmse_test,"current_param":current_param}
+    total_cycle_test,sum_rmse_test=get_total_cycle_mse(output_test_dir, netOutTensors)
+    ave_cossim=get_average_cossim(output_test_dir, netOutTensors)
+    return_val={"test_id":test_id,"total_cycle_test":total_cycle_test,"sum_rmse_test":sum_rmse_test,"ave_cossim":ave_cossim,"current_param":current_param}
     return return_val
 
 class MyThread(Thread):
@@ -97,70 +106,86 @@ def normal_process(args):
     if int(args.m)<int(args.w):
         args.w=args.m
     if int(args.m)%int(args.w)!=0:
-        args.m=int(args.m)//int(args.w)*int(args.m)
-    artstudio_excutor_path=os.path.join(artstudio_root_path,"art.studio/ArtStudio")
+        args.m=int(args.m)//int(args.w)*int(args.w)
+    UseSrc=args.SRC
+    #maskDump=args.maskDump
+    if UseSrc:
+        artstudio_excutor_path=os.path.join(artstudio_root_path,"src/generator")
+    else:
+        artstudio_excutor_path=os.path.join(artstudio_root_path,"cmd/acnn")
     ini=args.ini
     output_base_dir=args.o
-    # run all 8bit result
-    ini_8bit_path=ini[:-4]+"_8hp.ini"
-    output_8bit_dir=os.path.join(output_base_dir,get_ini_name(ini_8bit_path))
-    # create_dir(output_8bit_dir)
-    #set_ini_bit(ini,ini_8bit_path,8)
-    set_ini_bit(ini, ini_8bit_path, 0)
-    if BENCH_INIT:      
-        run_artstudio(artstudio_excutor_path,ini_8bit_path,output_base_dir)
-    # get cycle and mse
-    total_cycle_8bit,sum_rmse_8bit=get_total_cycle_mse(output_8bit_dir)
-
+    
     # run all 16 bit result
-    ini_16bit_path=ini[:-4]+"_16.ini"
+    ini_16bit_path=os.path.join(output_base_dir, get_ini_name(ini)+"_16.ini")
     output_16bit_dir=os.path.join(output_base_dir,get_ini_name(ini_16bit_path))
     # create_dir(output_16bit_dir)
     set_ini_bit(ini,ini_16bit_path,16)
-    if BENCH_INIT:
-        run_artstudio(artstudio_excutor_path,ini_16bit_path,output_base_dir)
-    total_cycle_16bit,sum_rmse_16bit=get_total_cycle_mse(output_16bit_dir)
+    # if BENCH_INIT:
+    #     #run_artstudio(artstudio_excutor_path,ini_16bit_path,output_base_dir, UseSrc, maskDump) 
+    #     run_artstudio(artstudio_excutor_path,ini_16bit_path,output_base_dir, UseSrc)  
+    # run all 8bit result
+    ini_8bit_path=os.path.join(output_base_dir, get_ini_name(ini)+"_8.ini")
+    output_8bit_dir=os.path.join(output_base_dir,get_ini_name(ini_8bit_path))
+    # create_dir(output_8bit_dir)
+    set_ini_bit(ini,ini_8bit_path,8)
+    # if BENCH_INIT:      
+    #     #run_artstudio(artstudio_excutor_path,ini_8bit_path,output_base_dir, UseSrc, maskDump) 
+    #     run_artstudio(artstudio_excutor_path,ini_8bit_path,output_base_dir, UseSrc)      
+    #get base informations
+    if int(args.d)==1:
+        ini_mix_path = ini_16bit_path
+        opt_model_path, opt_model_name=get_optmodel_path(output_16bit_dir)
+        bw_json=os.path.join(output_16bit_dir, "final_operator_internal_bw.json")
+    else:
+        ini_mix_path = ini_8bit_path
+        opt_model_path, opt_model_name=get_optmodel_path(output_8bit_dir)
+        bw_json=os.path.join(output_8bit_dir, "final_operator_internal_bw.json")
+    initJson=parse_json(bw_json)
+    opt_model=onnx.load(opt_model_path)
+    NetJson, initialLists=get_connection_net(initJson, opt_model)
+    netOutTensors=get_output_tensors(NetJson)
+    #read 16bit and 8bit cycle and rmse
+    total_cycle_16bit,sum_rmse_16bit=get_total_cycle_mse(output_16bit_dir, netOutTensors)
+    total_cycle_8bit,sum_rmse_8bit=get_total_cycle_mse(output_8bit_dir, netOutTensors)
+    ave_cossim_8bit=get_average_cossim(output_8bit_dir, netOutTensors)
+    ave_cossim_16bit=get_average_cossim(output_16bit_dir, netOutTensors)
 
     print("========================FINISH 8BIT 16BIT INIT RUN====================================")
-    print("8hp bit cycle:{} rmse:{}".format(total_cycle_8bit,sum_rmse_8bit))
-    print("16  bit cycle:{} rmse:{}".format(total_cycle_16bit,sum_rmse_16bit))
-    print("")
-    print("")
+    print("8  bit cycle:{} avermse:{}, avecossim:{}".format(total_cycle_8bit,'%.8f'%sum_rmse_8bit, '%.6f'%ave_cossim_8bit))
+    print("16 bit cycle:{} avermse:{}, avecossim:{}".format(total_cycle_16bit,'%.8f'%sum_rmse_16bit, '%.6f'%ave_cossim_16bit))
     print("===============================START MIX QUANT=======================================")
 
     record_name="output_"+str(args.s)+".csv"
     record_name = os.path.join(output_base_dir, record_name)
     if os.path.exists(record_name):
         os.remove(record_name)
-    header = ['case','cycle','rmse','reward']
-    info_line = ['8(hp)bit', '{}'.format(total_cycle_8bit), '{}'.format(sum_rmse_8bit)]
+    header = ['case','cycle','ave_rmse', 'ave_cossim', 'reward']
+    info_line = ['8bit', '{}'.format(total_cycle_8bit), '%.8f'%sum_rmse_8bit, '%.6f'%ave_cossim_8bit]
     with open(record_name,'a+')as f:
         f_csv = csv.writer(f)
         f_csv.writerow(header)
         f_csv.writerow(info_line)
-    info_line = ['16bit', '{}'.format(total_cycle_16bit), '{}'.format(sum_rmse_16bit)]
+    info_line = ['16bit', '{}'.format(total_cycle_16bit), '%.8f'%sum_rmse_16bit, '%.6f'%ave_cossim_16bit]
     with open(record_name,'a+')as f:
         f_csv = csv.writer(f)
         f_csv.writerow(info_line)
     
-    if int(args.d)==1:
-        ini_mix_path = ini_16bit_path
-    else:
-        ini_mix_path = ini_8bit_path
     if args.UseOpt:
-        ini_mix_path=setOptModelOfOnnx(ini_mix_path, output_base_dir)
+        ini_mix_path=setOptModelOfOnnx(ini_mix_path, output_base_dir, opt_model_path, opt_model_name)
     mixQuantJsonHub=os.path.join(output_base_dir,"mixQuantJsonHub")
     if os.path.exists(mixQuantJsonHub):
         remove_dir(mixQuantJsonHub)
     create_dir(mixQuantJsonHub)
     _JsonDirSturct={"ini_mix_path":ini_mix_path,"mixJsonDir":mixQuantJsonHub}
-    ori_mixQuantJson=os.path.join(output_base_dir,get_ini_name(ini_mix_path)+"/final_operator_internal_bw.json")
-    netJson=load_json(ori_mixQuantJson)
-    precision_code_array=mixQuantJson2SearchArray(netJson)
-
+    # ori_mixQuantJson=os.path.join(output_base_dir,get_ini_name(ini_mix_path)+"/final_operator_internal_bw.json")
+    # netJson=load_json(ori_mixQuantJson)
+    BlkNodeInfos=get_block_node_infos(NetJson)
+    precision_code_array=mixQuantJson2SearchArray(BlkNodeInfos)
+    print(BlkNodeInfos)
     print(precision_code_array)
     agent=DiscreteDifferentialEvolutionController(MIND=int(args.m),M=float(args.mp),XOVR=float(args.xovr),
-                SEARCH_SPACE=mixQuantJson2SearchArray(netJson),bigger_is_better=True,random_bais=int(args.rd))
+                SEARCH_SPACE=mixQuantJson2SearchArray(BlkNodeInfos),bigger_is_better=True,random_bais=int(args.rd))
     # result_recorder={}
     x_iter = []
     y_reward = []
@@ -171,7 +196,8 @@ def normal_process(args):
     draw_state_fig(np.array(x_cycle), np.array(y_rmse), "Cycle", "rmse", "ro", cycle_rmse_dot)
     agent.init_performance.append({"cycle":total_cycle_8bit, "rmse":sum_rmse_8bit})
     agent.init_performance.append({"cycle":total_cycle_16bit, "rmse":sum_rmse_16bit})
-
+    
+    multithread_inis = []
     for _r in range(0,int(args.r)//int(args.w)):
         jobs = []
         for _w in range(int(args.w)):
@@ -184,11 +210,12 @@ def normal_process(args):
                 else:
                     precision_code_array[i]=8
             #precision_code_array[-1]=16
-            newNetJson=Array2mixQuantJson(netJson,precision_code_array)
-            newNetJson=precisionModify(newNetJson)
+            newNetJson=Array2mixQuantJson(initJson, BlkNodeInfos, precision_code_array, opt_model, initialLists)
+            #newNetJson=precisionModify(newNetJson)
             newNetJsonPath=os.path.join(mixQuantJsonHub,get_ini_name(ini_mix_path))+"_"+str(test_id)+".json"
             save_json(newNetJson,newNetJsonPath)
-            ini_test_path=ini[:-4]+"-process-worker"+str(_w)+".ini"
+            ini_test_path=os.path.join(output_base_dir, get_ini_name(ini)+"-process-worker"+str(_w)+".ini")
+            multithread_inis.append(ini_test_path)
             set_ini_bw_json(ini_mix_path,ini_test_path,newNetJsonPath)
             # multiprocess
             param={}
@@ -197,6 +224,9 @@ def normal_process(args):
             param["output_base_dir"]=output_base_dir
             param["test_id"]=test_id
             param["current_param"]=current_param
+            param["UseSrc"]=UseSrc
+            #param["maskDump"]=maskDump
+            param["netOutTensors"]=netOutTensors
             _thread=MyThread(studio_processing_worker, param)
             # process = multiprocessing.Process(target=studio_processing_worker, args=(param, process_queue))
 
@@ -217,6 +247,7 @@ def normal_process(args):
                 if result["test_id"]==test_id:
                     total_cycle_test=result["total_cycle_test"]
                     sum_rmse_test=result["sum_rmse_test"]
+                    ave_cossim_test=result["ave_cossim"]
                     current_param=result["current_param"]
                     found_flg=True
                     break
@@ -230,9 +261,10 @@ def normal_process(args):
                 relate_rmse=float(sum_rmse_test)/float(sum_rmse_8bit)
                 DistanceTo0 = np.sqrt(np.square(relate_cycle) + np.square(relate_rmse))
                 
-                agent.update_reward(current_param,reward_value,total_cycle_test,sum_rmse_test,DistanceTo0,test_id,_JsonDirSturct)
+                agent.update_reward(current_param,reward_value,total_cycle_test,sum_rmse_test,ave_cossim_test,DistanceTo0,test_id,_JsonDirSturct)
             
-            info_line = ['test {} round'.format(test_id), '{}'.format(total_cycle_test), '{}'.format(sum_rmse_test), '{}'.format(reward_value)]
+            info_line = ['test {} round'.format(test_id), '{}'.format(total_cycle_test), '%.8f'%sum_rmse_test,
+                         '%.6f'%ave_cossim_test,'%.6f'%reward_value]
             with open(record_name, 'a+') as f:
                 f_csv = csv.writer(f)
                 f_csv.writerow(info_line)
@@ -250,13 +282,19 @@ def normal_process(args):
                             cycle_rmse_dot,len(agent.best_record),wsplit_start=True)            
 
     info_line=''
-    best_header = ['best_id','cycle','rmse','reward','relDistance']
+    best_header = ['best_id','cycle','ave_rmse','ave_cossim','reward','relDistance']
     with open(record_name, 'a+') as f:
         f_csv = csv.writer(f)
         f_csv.writerow(info_line)
         f_csv.writerow(best_header)
     for _best_record in agent.best_record:
-        info_line=[str(_best_record["test"]), str(_best_record["cycle"]),str(_best_record["rmse"]),str(_best_record["reward"]),str(_best_record['relDistance'])]
+        info_line=['%d'%_best_record["test"], '%d'%_best_record["cycle"],'%.8f'%_best_record["rmse"],'%.6f'%_best_record["cossim"],
+                   '%.6f'%_best_record["reward"],'%.6f'%_best_record['relDistance']]
         with open(record_name, 'a+') as f:
             f_csv = csv.writer(f)
             f_csv.writerow(info_line)
+            
+    remove_dir(ini_16bit_path)
+    remove_dir(ini_8bit_path)
+    for ini_file in multithread_inis:
+        remove_dir(ini_file)

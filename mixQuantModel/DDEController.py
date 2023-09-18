@@ -66,10 +66,10 @@ class DiscreteDifferentialEvolutionController(object):
         for key in reward_dict:
             l.append(list(key))
 
-    def update_reward(self,key,value,cycle,rmse,relDistance,test_name,JsonDirSturct):
+    def update_reward(self,key,value,cycle,rmse,cossim,relDistance,test_name,JsonDirSturct):
         self.reward_dict.setdefault(tuple(key), value)
         if rmse<=self.init_performance[0]["rmse"]:
-            record={"test":test_name,"reward":value,"cycle":cycle,"rmse":rmse,"relDistance":relDistance,"sample":key}
+            record={"test":test_name,"reward":value,"cycle":cycle,"rmse":rmse,"cossim":cossim,"relDistance":relDistance,"sample":key}
             bestMixJsonDir=os.path.join(JsonDirSturct["mixJsonDir"],"bestMixJson")
             if not os.path.exists(bestMixJsonDir):
                 create_dir(bestMixJsonDir)
