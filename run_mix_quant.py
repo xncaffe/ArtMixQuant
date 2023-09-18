@@ -9,12 +9,12 @@ def parse_args():
     parser.add_argument("-o", default="./mixOutput", help="artstudio output dir")
     # parser.add_argument("-a", type=str, default="/home/nxu/workspace/ArtStudioV2/Art.Studio-dev-0913/", help="artstudio root path")
     # parser.add_argument("-ini", type=str, default="/home/nxu/workspace/model/EfficentViT/EfficentViT_M0_ar9341.ini", help="artstudio ini path")
-    # parser.add_argument("-o", type=str, default="../fastMixOutput", help="artstudio output dir")
+    # parser.add_argument("-o", type=str, default="./MixOutput", help="artstudio output dir")
     parser.add_argument("-w", type=int, default=1, help="multi process workers")
     parser.add_argument("-pm", type=int, default=0, help="mix precision processing method, 1=standard, 0=fast")
     parser.add_argument("-m", default=20, help="sample group, valid when pm=1")
     parser.add_argument("-s", default=0, help="test_slave, valid when pm=1")
-    parser.add_argument("-r", type=int, default=10000, help="search round, valid when pm=1")
+    parser.add_argument("-r", type=int, default=80, help="search round, valid when pm=1")
     parser.add_argument("-rd", type=int, default=0, help="random bais, set 16 or 8 or 0, valid when pm=1")
     parser.add_argument("-d", default=1, help="mix precision set direction, set 1 or 0, valid when pm=1")
     parser.add_argument("--PF", action='store_true', help="mse penalty factor or not, valid when pm=1")
@@ -32,6 +32,8 @@ def parse_args():
 def mix_init_run(args):
     logger.info("Start automatic mixed-precision initialization ...")
     base_runner = MixBaseRuntime(args.ini, args.a, args.o, args.SRC, args.w, args.l)
+    base_runner.check_art_version()
+    base_runner.get_before_run_buf()
     base_runner.check_thread_num_cpu(args)
     base_runner.init_file_path()
     base_runner.unpack_base_content()
@@ -71,9 +73,15 @@ def mix_uninit_run(runner_params: MixBaseRuntime):
 
 def main():
     args = parse_args()
-    args.UseOpt = True
+    #args.UseOpt = True
     start_time = time.time()
-    mix_quant_params = mix_init_run(args)
+    
+    peak_wset_param = {'main_pid': os.getpid(), 'peak_wset': 0, 'mix_run_flag': True}
+    real_time_peak_thread = RealTimePeakWsetThread(real_time_get_peak_wset, peak_wset_param)
+    real_time_peak_thread.setDaemon(True)
+    real_time_peak_thread.start()
+    
+    mix_quant_params = mix_init_run(args)  
     method_proc = args.pm
     if method_proc == 0:
         fast_mix_run(mix_quant_params)
@@ -82,6 +90,14 @@ def main():
     else:
         logger.error("The parameter 'pm' setting is invalid, please check!")
     mix_uninit_run(mix_quant_params)
+    
+    peak_wset_param['mix_run_flag'] = False
+    mix_peak_mem, mix_peak_unit = convert_mem_size(peak_wset_param['peak_wset'])
+    logger.info('################ Art Mix Quant Peak RSS Memory Estimate #################')
+    logger.info('Peak physical memory during search phase: %.6f '%mix_peak_mem + mix_peak_unit)
+    logger.info('#########################################################################')
+    
+    real_time_peak_thread.stop()
     end_time = time.time()
     run_time = (end_time - start_time) / 60.
     logger.info("The mixed precision search time used a total of %.2fmin"%run_time)

@@ -1,6 +1,5 @@
 import onnx
-import time
-import threading
+import datetime
 import pandas as pd
 from shutil import copyfile
 from common.artNetDecode import *
@@ -21,6 +20,7 @@ class MixBaseRuntime(object):
         self.art_studio_excutor_path = get_excutor_path(art_path, use_src)
         self.mix_quant_json_hub = os.path.join(out_dir, 'mixQuantJsonHub')
         self.record_excel_path = os.path.join(out_dir, 'output_0.xlsx')
+        self.art_version_dir = os.path.join(art_path, ".version")
         self.use_src = use_src
         self.thread_num = thread_num
         self.blk_final_nodes_info = None
@@ -29,6 +29,35 @@ class MixBaseRuntime(object):
         self.sheet_name = 'mix_quant_sheet'
         self.opt_model_path = None
         self.log_level = log_level
+        self.pure_8_status = True
+        self.pure_16_status = True
+    
+    def get_before_run_buf(self):
+        mem_info = psutil.virtual_memory()
+        total_phy_mem, total_phy_unit = convert_mem_size(mem_info.total)
+        free_phy_mem, free_phy_unit = convert_mem_size(mem_info.free)
+        used_phy_mem, used_phy_unit = convert_mem_size(mem_info.used)
+        logger.info("************* Current Computer Physical Memory Situation ***************")
+        logger.info('total physical memory: %.6f '%total_phy_mem + total_phy_unit)
+        logger.info('used  physical memory: %.6f '%used_phy_mem + used_phy_unit)
+        logger.info('free  physical memory: %.6f '%free_phy_mem + free_phy_unit)
+        logger.info("*************************************************************************")
+    
+    def check_art_version(self):
+        fp = open(self.art_version_dir, 'r')
+        lines_info = fp.readlines()
+        build_date_line = lines_info[-1]
+        build_date_list = build_date_line.strip().split("-")
+        build_year, build_month, build_day = [int(build_date_list[0]), 
+                                              int(build_date_list[1]), 
+                                              int(build_date_list[2].split(" ")[0])]
+        fp.close()
+        build_date = datetime.date(build_year, build_month, build_day)
+        earliest_adapt_date = datetime.date(2023, 9, 13)
+        if build_date < earliest_adapt_date:
+            logger.error("This version of the auto mix quant tool " 
+                         + "is only suitable for versions on September 13, 2023 and later.")
+            raise(0)   
     
     def init_file_path(self):
         create_dir(self.output_base_dir)
@@ -39,19 +68,26 @@ class MixBaseRuntime(object):
     
     def check_thread_num_cpu(self, args):
         kernel_num = os.cpu_count()
-        if kernel_num // 2 <= self.thread_num:
-            logger.error("The number of configured threads cannot be greater than or equal" 
-                         +" to half the number of CPU cores of the current computer.")
-            assert(0)
+        if kernel_num // 2 <= self.thread_num and self.thread_num != 1:
+            logger.warning("The number of configured threads cannot be greater than or equal" 
+                         +" to half the number of CPU cores of the current computer." 
+                         +" Current CPU core number = %d"%kernel_num)
+            self.thread_num = kernel_num // 2
+            logger.warning("Think you automatically adjust the number of threads to %d"%self.thread_num)
         if args.pm == 1 and self.thread_num > args.m:
-            logger.error("In normal mode, the number of threads cannot be greater than the number of populations " 
-                         + "(that is, -w cannot be greater than -m, currently w={} and m={})".format(args.w, args.m))
-            raise(0)
+            logger.warning("In normal mode, threads number cannot be greater than populations number " 
+                         + "(that is, -w cannot be greater than -m, currently w={}, m={})".format(args.w, args.m))
+            self.thread_num = args.m
+            logger.warning("I think you adjust the number of threads (-w) to be equal to the number of populations (-m). "
+                           +"that is, the number of threads is %d"%self.thread_num)
         if args.pm == 1 and args.m % self.thread_num != 0:
-            logger.error("In normal mode, " 
-                         + "the number of populations should be an integer multiple of the number of threads " 
-                         + "(that is, -m is an integer multiple of -w, currently w={} and m={})".format(args.w, args.m))
-            raise(0)
+            logger.warning("In normal mode, " 
+                         + "populations number should be an integer multiple of the threads number " 
+                         + "(that is, -m is an integer multiple of -w, currently w={} m={})".format(args.w, args.m))
+            while args.m % self.thread_num != 0 and self.thread_num != 1:
+                self.thread_num -= 1
+            logger.warning("Think you automatically adjust the number of threads to %d"%self.thread_num)
+            logger.warning("If you feel that this adjustment is inappropriate, you can interrupt the program and reconfigure as required.")
             
     def run_initbit_build(self, bit_num):
         dst_ini_path = self.ini_16bit_path if bit_num == 16 else self.ini_8bit_path
@@ -85,12 +121,47 @@ class MixBaseRuntime(object):
     def wait_purebit_build(self):
         logger.info("Waiting for the initialization of pure bit quantization to be completed ...")
         second_time = 0
+        pure_16_peak_wset = 0
+        pure_8_peak_wset = 0
+        pure_16_pid = None
+        pure_8_pid = None
+        main_process = psutil.Process()
         while True:
             start_time = time.time()
+            if not self.pure_8_status or not self.pure_16_status:
+                logger.error("Pure precision quantization exception, the main program exits.")
+                raise(0)
             cur_8bit_status = check_output_exist(self.output_16bit_dir)
             cur_16bit_status = check_output_exist(self.output_8bit_dir)
             if cur_8bit_status and cur_16bit_status:
                 break
+            if pure_16_pid is None or pure_8_pid is None:
+                children_process_list = main_process.children()
+                for child_proc in children_process_list:
+                    cur_cmd = child_proc.cmdline()
+                    if len(cur_cmd[2]) > 6 and cur_cmd[2][-5:] == '8.ini':
+                        pure_8_pid = child_proc.pid
+                    elif len(cur_cmd[2]) > 6 and cur_cmd[2][-6:] == '16.ini':
+                        pure_16_pid = child_proc.pid
+                    else:
+                        continue
+            for n in range(3):
+                try:
+                    pure_16_process = psutil.Process(pure_16_pid)
+                    pure_8_process = psutil.Process(pure_8_pid)
+                    pure_16_children_process_list = pure_16_process.children()
+                    pure_8_children_process_list = pure_8_process.children()
+                    cur_pure_16_rss = pure_16_process.memory_info().rss
+                    for pure_16_child_proc in pure_16_children_process_list:
+                        cur_pure_16_rss += pure_16_child_proc.memory_info().rss
+                    cur_pure_8_rss = pure_8_process.memory_info().rss
+                    for pure_8_child_proc in pure_8_children_process_list:
+                        cur_pure_8_rss += pure_8_child_proc.memory_info().rss
+                    pure_16_peak_wset = max(pure_16_peak_wset, cur_pure_8_rss)
+                    pure_8_peak_wset = max(pure_8_peak_wset, cur_pure_8_rss)
+                except:
+                    pass
+  
             min_time = second_time // 60
             hour_time = min_time // 60
             if hour_time >= 3:
@@ -104,14 +175,33 @@ class MixBaseRuntime(object):
             print("Waiting time: {}h-{}min-{}s".format((str(hour_time)).zfill(2), str(remain_min).zfill(2), str(remain_second).zfill(2)), end="")
             end_time = time.time()
             run_time = end_time - start_time
-            time.sleep((1.-run_time) if run_time < 1 else 0)
-            second_time += 1  
+            step_over = 1. if run_time <= 1. else 2.
+            time.sleep((step_over-run_time) if run_time < step_over else 0)
+            second_time += int(step_over)
+        max_total_phy_size = main_process.memory_info().rss + pure_16_peak_wset +  pure_8_peak_wset
+        max_total_phy_mem, max_total_phy_unit = convert_mem_size(max_total_phy_size)
+        peak_wset_16_mem, peak_wset_16_unit = convert_mem_size(pure_16_peak_wset)
+        peak_wset_8_mem, peak_wset_8_unit = convert_mem_size(pure_8_peak_wset)
+        print('\n')
+        logger.info('################################## Initialize Peak Mem #######################################')
+        logger.info('Initialization Maximum Physical Memory (Rough Estimate): %.6f '%max_total_phy_mem + max_total_phy_unit)
+        logger.info('Among them, pure 8bit  quantization, peak wset: %.6f '%peak_wset_16_mem + peak_wset_16_unit)
+        logger.info('Among them, pure 16bit quantization, peak wset: %.6f '%peak_wset_8_mem + peak_wset_8_unit)
+        logger.info('##############################################################################################')
     
     def thread_run_init8bit_build(self):
-        self.run_initbit_build(8)
+        try:
+            self.run_initbit_build(8)
+        except Exception as err:
+            self.pure_8_status = False
+            logger.error(err)
         
     def thread_run_init16bit_build(self):
-        self.run_initbit_build(16)         
+        try:
+            self.run_initbit_build(16)
+        except Exception as err:
+            self.pure_16_status = False
+            logger.error(err)         
     
     def unpack_base_content(self):
         logger.info("Get pure 8bit and 16bit performance data.")

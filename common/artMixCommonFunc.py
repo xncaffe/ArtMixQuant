@@ -1,4 +1,7 @@
 import os
+import time
+import threading
+import psutil
 import csv
 import copy
 import json
@@ -9,10 +12,44 @@ import logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger("[ArtMixQuant]")
 
+def real_time_get_peak_wset(params_dict: dict):
+    main_pid = params_dict['main_pid']
+    try:
+        main_process = psutil.Process(main_pid)
+    except:
+        return
+    cur_peak_size = main_process.memory_info().rss
+    children_process_list = main_process.children()
+    for children_proc in children_process_list:
+        cur_peak_size += children_proc.memory_info().rss
+        children_process_2level_list = children_proc.children()
+        for children_proc_2level in children_process_2level_list:
+            cur_peak_size += children_proc_2level.memory_info().rss
+    params_dict['peak_wset'] = max(cur_peak_size, params_dict['peak_wset'])
+
+
+class RealTimePeakWsetThread(threading.Thread):
+    def __init__(self, func, args):
+        super(RealTimePeakWsetThread, self).__init__()
+        self.func = func
+        self.args = args
+        self.stop_flag = False
+        
+    def run(self):
+        while not self.stop_flag:
+            try:
+                self.func(self.args)
+            except:
+                break
+            time.sleep(0.05)
+    
+    def stop(self):
+        self.stop_flag = True
+
 def create_dir(dir):
     try:
         if not os.path.exists(dir):
-            os.mkdir(dir)
+            os.makedirs(dir)
     except:
         logger.warning(dir + " exist!")
         pass
@@ -34,6 +71,16 @@ def remove_dir(dir):
     except:
         logger.warning(dir + " is not exist!")
         pass
+
+def convert_mem_size(size_bytes):
+    units = ['B', 'KB', 'MB', 'GB', 'TB', 'PB']
+
+    index = 0
+    while size_bytes >= 1024. and index < len(units) - 1:
+        size_bytes /= 1024.
+        index += 1
+
+    return size_bytes, units[index]
 
 def get_ini_name(dir):
     return dir.split("/")[-1].split(".")[0]

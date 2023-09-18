@@ -1,4 +1,3 @@
-import threading
 import queue
 import progressbar
 import numpy as np

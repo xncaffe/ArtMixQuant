@@ -1,7 +1,8 @@
-import threading
 import queue
 import progressbar
 import numpy as np
+import matplotlib
+matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 from progressbar import *
 from normal.dge_alg import *
