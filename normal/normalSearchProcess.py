@@ -49,6 +49,7 @@ class NormalProControlEval(MixBaseRuntime):
         self.reward_loss_curve_dir = os.path.join(base_params.output_base_dir, 'reward_loss_case_curve.png')
         self.cycel_rmse_dot_dir = os.path.join(base_params.output_base_dir, 'iter_cycle_rmse_vary.png')
         create_dir(self.best_bw_path)
+        self.COLUMNS_LIST = [chr(x) for x in np.arange(65, 91)]
         
     def mix_quant_json_to_search_array(self):
         net_block_json = self.base_params.blk_final_nodes_info
@@ -161,10 +162,33 @@ class NormalProControlEval(MixBaseRuntime):
         cur_workbook = cur_writer.book
         cur_worksheet = cur_writer.sheets[self.sheet_name]
         wk_param = cur_workbook.add_format({'bg_color': '#FFFF00', 'bold': True, 'align': 'center', 'border': 2})
-        for iter_col in range(len(header_list)):
-            cur_worksheet.write(0, iter_col, header_list[iter_col], wk_param)
-        for best_col in range(len(best_header_list)):
-            cur_worksheet.write(best_start_row, best_col, best_header_list[best_col], wk_param)
+        normal_row_param = cur_workbook.add_format({'bottom': 1, 'left': 1, 'right': 1})
+        first_iter_param = cur_workbook.add_format({'border': 1})
+        fp_num_format_param = cur_workbook.add_format({'num_format': '0.000000'})
+        for iter_row in range(iter_record_pd_data.index.size):
+            data_range = '{}{}:{}{}'.format(self.COLUMNS_LIST[0], iter_row+2, self.COLUMNS_LIST[4], iter_row+2)
+            data_fp_range = '{}{}:{}{}'.format(self.COLUMNS_LIST[2], iter_row+2, self.COLUMNS_LIST[4], iter_row+2)
+            if iter_row < 2 or iter_row > 3:
+                cur_worksheet.conditional_format(data_range, {'type': 'no_blanks', 'format': normal_row_param})
+            elif iter_row == 3:
+                cur_worksheet.conditional_format(data_range, {'type': 'no_blanks', 'format': first_iter_param})
+            else:
+                continue
+            cur_worksheet.conditional_format(data_fp_range, {'type': 'no_blanks', 'format': fp_num_format_param})
+        iter_header_range = '{}{}:{}{}'.format(self.COLUMNS_LIST[0], 1, self.COLUMNS_LIST[4], 1)
+        cur_worksheet.conditional_format(iter_header_range, {'type': 'no_blanks', 'format': wk_param})
+        # for iter_col in range(len(header_list)):
+        #     cur_worksheet.write(0, iter_col, header_list[iter_col], wk_param)
+        best_data_range = '{}{}:{}{}'.format(self.COLUMNS_LIST[0], best_start_row+2, 
+                                             self.COLUMNS_LIST[5], best_start_row+2+best_iter_pd_data.index.size)
+        best_fp_data_range = '{}{}:{}{}'.format(self.COLUMNS_LIST[2], best_start_row+2, 
+                                             self.COLUMNS_LIST[5], best_start_row+2+best_iter_pd_data.index.size)
+        cur_worksheet.conditional_format(best_data_range, {'type': 'no_blanks', 'format': normal_row_param})
+        cur_worksheet.conditional_format(best_fp_data_range, {'type': 'no_blanks', 'format': fp_num_format_param})
+        #for best_col in range(len(best_header_list)):
+        best_header_range = '{}{}:{}{}'.format(self.COLUMNS_LIST[0], best_start_row+1, self.COLUMNS_LIST[5], best_start_row+1)
+        cur_worksheet.conditional_format(best_header_range, {'type': 'no_blanks', 'format': wk_param})       
+        cur_worksheet.set_column('{}:{}'.format(self.COLUMNS_LIST[0], self.COLUMNS_LIST[5]), 10)
         cur_writer.save()
         
     def draw_state_figure(self, best_record_list:list=[], switch_case:str='loss'):

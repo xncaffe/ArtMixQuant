@@ -262,7 +262,7 @@ class MixBaseRuntime(object):
                       'ave_cossim':['%.6f'%self.ave_cossim_8bit, '%.6f'%self.ave_cossim_16bit]}
         init_df_data = pd.DataFrame(table_data)
         with pd.ExcelWriter(self.record_excel_path, engine='xlsxwriter') as init_df_writer:
-            init_df_data.to_excel(init_df_writer, sheet_name=self.sheet_name, startcol=1, index=False) 
+            init_df_data.to_excel(init_df_writer, sheet_name=self.sheet_name, startcol=0, index=False) 
     
     def dump_mix_quant_log(self):
         logger.info("===============================================================================")

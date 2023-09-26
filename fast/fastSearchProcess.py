@@ -151,20 +151,25 @@ class FastProControlEval(MixBaseRuntime):
                                                 reverse=False)
         
     def dump_stack_data_to_record(self, spec_id=MAX_BLOCK_ID):
+        first_col_color = '#D3D3D3'
+        use_8_row_color = '#AFEEEE'
+        spec_row_color = '#FF0000'
+        spec_font_color = '#FFFFFF'
+        use_16_row_color = '#F0FFFF'
         def style_apply_color(series, spec_id):
             series_name = series.name
             colors_list = list()
             for idx, col in enumerate(series):
                 if series_name == 'node_priority_id' and idx != spec_id:
-                    cur_color = 'background-color: #D3D3D3'
+                    cur_color = 'background-color: '+first_col_color
                 # elif col == '' and idx != spec_id:
                 #     cur_color = ''
                 elif idx < spec_id:
-                    cur_color = 'background-color: #00FF7F'
+                    cur_color = 'background-color: '+use_8_row_color
                 elif idx == spec_id:
-                    cur_color = 'background-color: #FF0000; color: #FFFFFF; font-weight: bold'
+                    cur_color = 'background-color: {}; color: {}; font-weight: bold'.format(spec_row_color, spec_font_color)
                 else:
-                    cur_color = 'background-color: #AFEEEE'
+                    cur_color = 'background-color: '+use_16_row_color
                 if col != '':
                     cur_color += '; vertical-align: middle'
                 colors_list.append(cur_color)
@@ -172,7 +177,7 @@ class FastProControlEval(MixBaseRuntime):
         
         src_record_data = pd.read_excel(self.record_excel_path, sheet_name=self.sheet_name)
         src_df_data = pd.DataFrame(src_record_data)
-        base_df_data = src_df_data.iloc[:2, 1:5]
+        base_df_data = src_df_data.iloc[:2, :4]
         node_header_list = ['tensor_%d'%i for i in range(self.base_params.blk_max_length)]
         header_list = ['node_priority_id', 'cycle', 'ave_rmse', 'ave_cossim', 'use_8', 'block_name'] \
             + node_header_list
@@ -181,21 +186,21 @@ class FastProControlEval(MixBaseRuntime):
             stack_record_data[header_name] = []
         for idx, block_name in enumerate(self.sorted_per_block_names_list):
             if block_name in self.fast_mix_stack_quant_params.keys():
-                stack_record_data['node_priority_id'].append(str(idx))
+                stack_record_data['node_priority_id'].append(idx)
                 stack_record_data['block_name'].append(block_name)
                 cur_tensor_names_list = self.base_params.set_blocks_dict[block_name]
                 for i in range(self.base_params.blk_max_length):
                     stack_record_data['tensor_%d'%i].append(cur_tensor_names_list[i] \
                         if len(cur_tensor_names_list) > i else '')
                 stack_record_data['use_8'].append('Yes' if idx <= spec_id else 'No')
-                stack_record_data['cycle'].append('%d'%self.fast_mix_stack_quant_params[block_name].cycle)
-                stack_record_data['ave_rmse'].append('%.9f'%self.fast_mix_stack_quant_params[block_name].ave_rmse)
-                stack_record_data['ave_cossim'].append('%.6f'%self.fast_mix_stack_quant_params[block_name].ave_cossim)
+                stack_record_data['cycle'].append(self.fast_mix_stack_quant_params[block_name].cycle)
+                stack_record_data['ave_rmse'].append(self.fast_mix_stack_quant_params[block_name].ave_rmse)
+                stack_record_data['ave_cossim'].append(self.fast_mix_stack_quant_params[block_name].ave_cossim)
             else:
                 break
         cur_writer = pd.ExcelWriter(self.record_excel_path, engine='xlsxwriter')
         style_base_df_data = base_df_data.style.applymap(lambda v:"background-color: #99FFCC; vertical-align: middle")
-        style_base_df_data.to_excel(cur_writer, sheet_name=self.sheet_name, startcol=1, index=False)
+        style_base_df_data.to_excel(cur_writer, sheet_name=self.sheet_name, startcol=0, index=False)
         if spec_id < FastProControlEval.MAX_BLOCK_ID:
             spec_record_data = self.fast_mix_stack_quant_params[self.sorted_per_block_names_list[spec_id]]
             spec_pd_data = pd.DataFrame(dict(zip(list(base_df_data.columns), [['mix'], 
@@ -203,7 +208,7 @@ class FastProControlEval(MixBaseRuntime):
                                 [spec_record_data.ave_cossim]])))
             base_df_data = base_df_data.append(spec_pd_data, ignore_index=True)
             style_base_df_data = base_df_data.style.applymap(lambda v:"background-color: #99FFCC; vertical-align: middle")
-            style_base_df_data.to_excel(cur_writer, sheet_name=self.sheet_name, startcol=1, index=False)
+            style_base_df_data.to_excel(cur_writer, sheet_name=self.sheet_name, startcol=0, index=False)
         mix_data_start_row = 7
         stack_df_data = pd.DataFrame(stack_record_data)
         style_stack_df_data = stack_df_data.style.apply(style_apply_color, spec_id=spec_id)
@@ -213,11 +218,69 @@ class FastProControlEval(MixBaseRuntime):
         cur_worksheet = cur_writer.sheets[self.sheet_name]
         base_header_list = list(base_df_data.columns)
         wk_param = cur_workbook.add_format({'bg_color': '#FFFF00', 'bold': True, 'align': 'center', 'border': 2})
+        base_row_param = cur_workbook.add_format({'bg_color': '#99FFCC', 'bold': False, 
+                                                  'align': 'center', 'bottom': 1, 'left': 1, 'right': 1})
+        first_col_param = cur_workbook.add_format({'bg_color': first_col_color, 'bold': False, 
+                                                   'align': 'center', 'bottom': 1, 'left': 1, 'right': 1})
+        use_8_row_param = cur_workbook.add_format({'bg_color': use_8_row_color, 'bold': False, 
+                                                   'align': 'center', 'bottom': 1, 'left': 1, 'right': 1})
+        spec_row_param = cur_workbook.add_format({'bg_color': spec_row_color, 'font_color': spec_font_color, 
+                                                  'bold': True, 'align': 'center', 'bottom': 1, 'left': 1, 'right': 1})
+        use_16_row_param = cur_workbook.add_format({'bg_color': use_16_row_color, 'bold': False, 
+                                                    'align': 'center', 'bottom': 1, 'left': 1, 'right': 1})
+        use_8_tensor_param = cur_workbook.add_format({'bg_color': use_8_row_color, 'bold': False, 
+                                                      'align': 'center', 'bottom': 1})
+        spec_tensor_param = cur_workbook.add_format({'bg_color': spec_row_color, 'font_color': spec_font_color, 
+                                                     'bold': False, 'align': 'center', 'bottom': 1})
+        use_16_tensor_param = cur_workbook.add_format({'bg_color': use_16_row_color, 'bold': False, 
+                                                       'align': 'center', 'bottom': 1})
+        use_8_last_param = cur_workbook.add_format({'bg_color': use_8_row_color, 'bold': False, 
+                                                    'align': 'center', 'bottom': 1, 'right': 1})
+        spec_last_param = cur_workbook.add_format({'bg_color': spec_row_color, 'font_color': spec_font_color, 
+                                                   'bold': False, 'align': 'center', 'bottom': 1, 'right': 1})
+        use_16_last_param = cur_workbook.add_format({'bg_color': use_16_row_color, 'bold': False, 
+                                                     'align': 'center', 'bottom': 1, 'right': 1})
         for base_col in range(len(base_header_list)):
-            cur_worksheet.write(0, base_col+1, base_header_list[base_col], wk_param)
+            cur_worksheet.write(0, base_col, base_header_list[base_col], wk_param)
+            for base_row in range(base_df_data.index.size):
+                cur_worksheet.write(base_row+1, base_col, base_df_data.iloc[base_row, base_col], base_row_param)
         stack_header_list = list(stack_df_data.columns)
         for stack_col in range(len(stack_header_list)):
             cur_worksheet.write(mix_data_start_row, stack_col, stack_header_list[stack_col], wk_param)
+        no_merge_end_len = len(header_list) - self.base_params.blk_max_length
+        for info_col in range(len(header_list)):
+            for info_row in range(stack_df_data.index.size):
+                if info_row < spec_id:
+                    if info_col == 0:
+                        current_param = first_col_param
+                    elif info_col < no_merge_end_len:
+                        current_param = use_8_row_param
+                    elif info_col == len(header_list) - 1:
+                        current_param = use_8_last_param
+                    else:
+                        current_param = use_8_tensor_param
+                elif info_row == spec_id:
+                    if info_col < no_merge_end_len:
+                        current_param = spec_row_param
+                    elif info_col == len(header_list) - 1:
+                        current_param = spec_last_param
+                    else:
+                        current_param = spec_tensor_param
+                else:
+                    if info_col == 0:
+                        current_param = first_col_param
+                    elif info_col < no_merge_end_len:
+                        current_param = use_16_row_param
+                    elif info_col == len(header_list) - 1:
+                        current_param = use_16_last_param
+                    else:
+                        current_param = use_16_tensor_param
+                cur_worksheet.write(mix_data_start_row+1+info_row, info_col, stack_df_data.iloc[info_row, info_col], current_param)
+        performance_cell_range = '{}{}:{}{}'.format(self.COLUMNS_LIST[2], mix_data_start_row+1, 
+                                                    self.COLUMNS_LIST[3], mix_data_start_row+1+stack_df_data.index.size)
+        fp_num_format_param = cur_workbook.add_format({'num_format': '0.000000'})
+        cur_worksheet.set_column('{}:{}'.format(self.COLUMNS_LIST[2], self.COLUMNS_LIST[3]), 10)
+        cur_worksheet.conditional_format(performance_cell_range, {'type': 'no_blanks', 'format': fp_num_format_param})         
         stack_header_merge_range = self.COLUMNS_LIST[6:(6 + self.base_params.blk_max_length)]
         merge_range_str = '{}{}:{}{}'.format(stack_header_merge_range[0], mix_data_start_row+1, stack_header_merge_range[-1], mix_data_start_row+1)
         cur_worksheet.merge_range(merge_range_str, 'tensor_names', wk_param)
