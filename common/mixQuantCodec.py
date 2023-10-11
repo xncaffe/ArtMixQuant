@@ -42,6 +42,14 @@ class MixBaseRuntime(object):
         logger.info('used  physical memory: %.6f '%used_phy_mem + used_phy_unit)
         logger.info('free  physical memory: %.6f '%free_phy_mem + free_phy_unit)
         logger.info("*************************************************************************")
+        
+    def delete_prefix_pure_presion_output(self):
+        if os.path.exists(self.output_16bit_dir):
+            logger.info("Uninstalling the front-end 16bit precision output file ...")
+            os.system(f"rm -r {self.output_16bit_dir}")
+        if os.path.exists(self.output_8bit_dir):
+            logger.info("Uninstalling the front-end 8bit precision output file ...")
+            os.system(f"rm -r {self.output_8bit_dir}")
     
     def check_art_version(self):
         fp = open(self.art_version_dir, 'r')
@@ -252,8 +260,8 @@ class MixBaseRuntime(object):
         ini_out_file.close()
         return dst_ini_path
     
-    def set_opt_model_mix_ini(self, use_opt=False):
-        self.ini_mix_path = self.set_opt_model_of_onnx() if use_opt else self.ini_16bit_path
+    def set_opt_model_mix_ini(self, no_use_opt=False):
+        self.ini_mix_path = self.set_opt_model_of_onnx() if not no_use_opt else self.ini_16bit_path
         logger.info("Use the opt model and store it in '%s'"%self.opt_model_path)
     
     def dump_base_performance(self):

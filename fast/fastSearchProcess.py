@@ -279,7 +279,8 @@ class FastProControlEval(MixBaseRuntime):
         performance_cell_range = '{}{}:{}{}'.format(self.COLUMNS_LIST[2], mix_data_start_row+1, 
                                                     self.COLUMNS_LIST[3], mix_data_start_row+1+stack_df_data.index.size)
         fp_num_format_param = cur_workbook.add_format({'num_format': '0.000000'})
-        cur_worksheet.set_column('{}:{}'.format(self.COLUMNS_LIST[2], self.COLUMNS_LIST[3]), 10)
+        cur_worksheet.set_column('{}:{}'.format(self.COLUMNS_LIST[0], self.COLUMNS_LIST[0]), 20)
+        cur_worksheet.set_column('{}:{}'.format(self.COLUMNS_LIST[1], self.COLUMNS_LIST[5]), 12)
         cur_worksheet.conditional_format(performance_cell_range, {'type': 'no_blanks', 'format': fp_num_format_param})         
         stack_header_merge_range = self.COLUMNS_LIST[6:(6 + self.base_params.blk_max_length)]
         merge_range_str = '{}{}:{}{}'.format(stack_header_merge_range[0], mix_data_start_row+1, stack_header_merge_range[-1], mix_data_start_row+1)

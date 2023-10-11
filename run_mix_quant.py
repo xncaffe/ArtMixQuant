@@ -14,17 +14,18 @@ def parse_args():
     parser.add_argument("-pm", type=int, default=0, help="mix precision processing method, 1=standard, 0=fast")
     parser.add_argument("-m", default=20, help="sample group, valid when pm=1")
     parser.add_argument("-s", default=0, help="test_slave, valid when pm=1")
-    parser.add_argument("-r", type=int, default=80, help="search round, valid when pm=1")
+    parser.add_argument("-r", type=int, default=10000, help="search round, valid when pm=1")
     parser.add_argument("-rd", type=int, default=0, help="random bais, set 16 or 8 or 0, valid when pm=1")
     parser.add_argument("-d", default=1, help="mix precision set direction, set 1 or 0, valid when pm=1")
-    parser.add_argument("--PF", action='store_true', help="mse penalty factor or not, valid when pm=1")
-    parser.add_argument("--UseOpt", action='store_true', help="use opt-model or no when mix quant search. Only support ONNX!")
     parser.add_argument("-xovr", type=float, default=0.1, help="xovr, valid when pm=1")
     parser.add_argument("-mp", type=float, default=0.85, help="mp, valid when pm=1")
     parser.add_argument("-cr", default=0.5, help="target cycle ratio, less than 1, valid when pm=0")
     parser.add_argument("-mr", default=0.8, help="target rmse ratio, less than 1, valid when pm=0")
     parser.add_argument("-l", type=int, default=-1, help="log level")
-    parser.add_argument("--SRC", action='store_true', help="use src code run acnn.py!")
+    parser.add_argument("--PF", action='store_true', help="mse penalty factor or not, valid when pm=1")
+    parser.add_argument("--NoUseOpt", action='store_true', help=argparse.SUPPRESS)
+    parser.add_argument("--SRC", action='store_true', help=argparse.SUPPRESS)
+    parser.add_argument("--NORERUN", action='store_true', help=argparse.SUPPRESS) # do not generate npubin
     #parser.add_argument("--maskDump", action='store_true', help="mask the output of each layer!")
     args = parser.parse_args()
     return args
@@ -32,6 +33,8 @@ def parse_args():
 def mix_init_run(args):
     logger.info("Start automatic mixed-precision initialization ...")
     base_runner = MixBaseRuntime(args.ini, args.a, args.o, args.SRC, args.w, args.l)
+    if not args.NORERUN:
+        base_runner.delete_prefix_pure_presion_output()
     base_runner.check_art_version()
     base_runner.get_before_run_buf()
     base_runner.check_thread_num_cpu(args)
@@ -41,7 +44,7 @@ def mix_init_run(args):
     base_runner.dump_initbit_result()
     base_runner.dump_mix_quant_log()
     base_runner.compute_target_performance(float(args.cr), float(args.mr))
-    base_runner.set_opt_model_mix_ini(args.UseOpt)
+    base_runner.set_opt_model_mix_ini(args.NoUseOpt)
     base_runner.dump_base_performance()
     base_module = ModuleCodec(base_runner.net_struct_json)
     base_runner.blk_final_nodes_info = base_module.get_block_node_infos()
@@ -50,11 +53,11 @@ def mix_init_run(args):
         logger.error("The thread_num cannot be greater than the number of modules for fast mode. "
                      + "The current number of network modules is %d, please reset."%len(base_runner.blk_final_nodes_info.keys()))
         assert(0)
-    if base_runner.thread_num > 200 and args.pm == 1:
-        logger.error("In standard mode, the number of threads should not be greater than 200, please readjust it.")
+    if base_runner.thread_num > 100 and args.pm == 1:
+        logger.error("In standard mode, the number of threads should not be greater than 100, please readjust it.")
         assert(0)
-    if 200 % base_runner.thread_num > 0:
-        logger.warning("In standard mode, the efficiency is highest when the number of threads can be divided evenly by 200.")
+    if 100 % base_runner.thread_num > 0:
+        logger.warning("In standard mode, the efficiency is highest when the number of threads can be divided evenly by 100.")
     logger.info("Mix quant search initialization finish!")
     return base_runner
 
@@ -66,14 +69,13 @@ def mix_uninit_run(runner_params: MixBaseRuntime):
     for cur_out_file in cur_out_files_list:
         cur_out_dir = os.path.join(runner_params.output_base_dir, cur_out_file)
         if os.path.exists(cur_out_dir) and not cur_out_file.endswith(
-            (".xlsx", "opt-model", "mixQuantJsonHub", pure_16bit_outpath_name, pure_8bit_outpath_name)):
+            (".xlsx", "opt-model", "mixQuantJsonHub", ".png",
+             pure_16bit_outpath_name, pure_8bit_outpath_name)):
             os.system(f"rm -r {cur_out_dir}")
-    
     logger.info("Mix quant search uninit finish!")
 
 def main():
     args = parse_args()
-    #args.UseOpt = True
     start_time = time.time()
     
     peak_wset_param = {'main_pid': os.getpid(), 'peak_wset': 0, 'mix_run_flag': True}
